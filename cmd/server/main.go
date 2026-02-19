@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"gopherpay/internal/audit"
 	"gopherpay/internal/billing"
 	"gopherpay/internal/config"
 	apphttp "gopherpay/internal/http"
@@ -33,15 +34,19 @@ func main() {
 	logr := logger.NewLogger()
 
 	repo := billing.NewMySQLRepository(db)
-	service := billing.NewService(repo, logr)
+	auditRepo := audit.NewMySQLRepository(db)
+	service := billing.NewService(repo, auditRepo, logr)
 
-	pool := worker.NewPool(100, service, logr)
+	pool := worker.NewPool(100, service, logr) //lower buffer size to test backpressure (429)
 	pool.Start(10)
 
-	handler := apphttp.NewTransferHandler(pool)
+	// handler := apphttp.NewTransferHandler(pool)
+	handler := apphttp.NewTransferHandler(pool, auditRepo)
+	healthHandler := apphttp.NewHealthHandler(db)
 
 	mux := http.NewServeMux()
 	mux.Handle("/transfer", middleware.RequestID(handler))
+	mux.Handle("/health", healthHandler)
 
 	server := &http.Server{
 		Addr:    ":8080",

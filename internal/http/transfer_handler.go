@@ -4,17 +4,22 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"gopherpay/internal/audit"
 	"gopherpay/internal/billing"
 	"gopherpay/internal/middleware"
 	"gopherpay/internal/worker"
 )
 
 type TransferHandler struct {
-	pool *worker.Pool
+	pool      *worker.Pool
+	auditRepo audit.Repository
 }
 
-func NewTransferHandler(pool *worker.Pool) *TransferHandler {
-	return &TransferHandler{pool: pool}
+func NewTransferHandler(pool *worker.Pool, auditRepo audit.Repository) *TransferHandler {
+	return &TransferHandler{
+		pool:      pool,
+		auditRepo: auditRepo,
+	}
 }
 
 type transferRequestPayload struct {
@@ -27,6 +32,18 @@ func (h *TransferHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var payload transferRequestPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+
+		reqID := middleware.GetRequestID(r.Context())
+		msg := "invalid json payload"
+
+		// log audit
+		h.auditRepo.Log(r.Context(), &audit.AuditLog{
+			RequestID: reqID,
+			Action:    "TRANSFER",
+			Status:    "FAILED",
+			Message:   &msg,
+		})
+
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
