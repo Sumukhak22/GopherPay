@@ -1,0 +1,94 @@
+package billing
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+type MySQLRepository struct {
+	db *sql.DB
+}
+
+func NewMySQLRepository(db *sql.DB) *MySQLRepository {
+	return &MySQLRepository{db: db}
+}
+
+func (r *MySQLRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
+	return r.db.BeginTx(ctx, nil)
+}
+
+func (r *MySQLRepository) GetAccountForUpdate(ctx context.Context, tx *sql.Tx, accountID uint64) (*Account, error) {
+	query := `
+		SELECT id, balance, created_at, updated_at
+		FROM accounts
+		WHERE id = ?
+		FOR UPDATE
+	`
+
+	row := tx.QueryRowContext(ctx, query, accountID)
+
+	var acc Account
+	err := row.Scan(&acc.ID, &acc.Balance, &acc.CreatedAt, &acc.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch account %d: %w", accountID, err)
+	}
+
+	return &acc, nil
+}
+
+func (r *MySQLRepository) UpdateAccountBalance(ctx context.Context, tx *sql.Tx, accountID uint64, newBalance int64) error {
+	query := `
+		UPDATE accounts
+		SET balance = ?, updated_at = NOW()
+		WHERE id = ?
+	`
+
+	_, err := tx.ExecContext(ctx, query, newBalance, accountID)
+	if err != nil {
+		return fmt.Errorf("failed to update balance for account %d: %w", accountID, err)
+	}
+
+	return nil
+}
+
+func (r *MySQLRepository) InsertTransaction(ctx context.Context, tx *sql.Tx, txn *Transaction) (uint64, error) {
+	query := `
+		INSERT INTO transactions 
+		(request_id, from_account_id, to_account_id, amount, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+	`
+
+	result, err := tx.ExecContext(ctx, query,
+		txn.RequestID,
+		txn.FromAccountID,
+		txn.ToAccountID,
+		txn.Amount,
+		txn.Status,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert transaction: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get inserted transaction id: %w", err)
+	}
+
+	return uint64(id), nil
+}
+
+func (r *MySQLRepository) UpdateTransactionStatus(ctx context.Context, tx *sql.Tx, txnID uint64, status TransactionStatus, errMsg *string) error {
+	query := `
+		UPDATE transactions
+		SET status = ?, error_message = ?, updated_at = NOW()
+		WHERE id = ?
+	`
+
+	_, err := tx.ExecContext(ctx, query, status, errMsg, txnID)
+	if err != nil {
+		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	return nil
+}
