@@ -12,7 +12,7 @@ CREATE TABLE accounts (
  
 CREATE TABLE transactions (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    request_id VARCHAR(64) NOT NULL,
+    request_id VARCHAR(64) NOT NULL UNIQUE,
     from_account_id BIGINT UNSIGNED NOT NULL,
     to_account_id BIGINT UNSIGNED NOT NULL,
     amount BIGINT NOT NULL,
@@ -29,3 +29,16 @@ CREATE INDEX idx_from_account ON transactions(from_account_id);
 CREATE INDEX idx_to_account ON transactions(to_account_id);
 CREATE INDEX idx_request_id ON transactions(request_id);
 CREATE INDEX idx_created_at ON transactions(created_at);
+
+ 
+CREATE TABLE audit_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_id VARCHAR(64) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    message VARCHAR(255) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_audit_request_id FOREIGN KEY (request_id) REFERENCES transactions(request_id) ON DELETE CASCADE,
+    INDEX idx_request_id (request_id),
+    INDEX idx_created_at (created_at)
+);

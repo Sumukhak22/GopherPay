@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"gopherpay/internal/config"
-
-	"database/sql"
+	"gopherpay/internal/reporting"
 )
 
 func main() {
@@ -58,21 +57,8 @@ func runReport() {
 		os.Exit(1)
 	}
 
-	log.Printf("[INFO] Generating transaction report for User ID: %d\n", userID)
+	log.Printf("[INFO] Generating comprehensive report for User ID: %d\n", userID)
 
-	// // Load config
-	// cfg, err := config.Load()
-	// if err != nil {
-	// 	log.Println("[ERROR] Config load failed:", err)
-	// 	os.Exit(1)
-	// }
-
-	// // Connect DB
-	// db, err := config.NewDBConnection(cfg)
-	// if err != nil {
-	// 	log.Println("[ERROR] Database connection failed:", err)
-	// 	os.Exit(1)
-	// }
 	cfg, err := config.LoadDBConfig()
 	if err != nil {
 		log.Println("[ERROR] Config load failed:", err)
@@ -87,32 +73,15 @@ func runReport() {
 
 	defer db.Close()
 
-	// Context with timeout (important to prevent hanging queries)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Query transactions (READ ONLY)
-	query := `
-	SELECT 
-		id,
-		request_id,
-		from_account_id,
-		to_account_id,
-		amount,
-		status,
-		error_message,
-		created_at
-	FROM transactions
-	WHERE from_account_id = ? OR to_account_id = ?
-	ORDER BY created_at DESC
-	`
-
-	rows, err := db.QueryContext(ctx, query, userID, userID)
+	// Use the new multi-table query
+	details, err := reporting.GetUserTransactionsWithAudit(ctx, db, userID)
 	if err != nil {
-		log.Println("[ERROR] Query failed:", err)
+		log.Println("[ERROR] Failed to fetch transactions:", err)
 		os.Exit(1)
 	}
-	defer rows.Close()
 
 	fileName := fmt.Sprintf("user_%d_report.csv", userID)
 	file, err := os.Create(fileName)
@@ -125,78 +94,92 @@ func runReport() {
 	bufferedWriter := bufio.NewWriter(file)
 	csvWriter := csv.NewWriter(bufferedWriter)
 
-	// Write CSV header
+	// ===== SECTION 1: Transaction Overview =====
 	err = csvWriter.Write([]string{
-		"ID",
+		"=== TRANSACTION OVERVIEW ===",
+	})
+	if err != nil {
+		log.Println("[ERROR] Failed to write header:", err)
+		os.Exit(1)
+	}
+
+	csvWriter.Write([]string{})
+
+	err = csvWriter.Write([]string{
+		"TransactionID",
 		"RequestID",
 		"FromAccountID",
 		"ToAccountID",
 		"Amount(Cents)",
 		"Status",
 		"ErrorMessage",
+		"FromAccountBalance",
+		"ToAccountBalance",
 		"CreatedAt",
 	})
 	if err != nil {
-		log.Println("[ERROR] Failed to write CSV header:", err)
+		log.Println("[ERROR] Failed to write transaction header:", err)
 		os.Exit(1)
 	}
 
-	var rowCount int
-
-	for rows.Next() {
-
-		var (
-			id            uint64
-			requestID     string
-			fromAccountID uint64
-			toAccountID   uint64
-			amount        int64
-			status        string
-			errorMessage  sql.NullString
-			createdAt     time.Time
-		)
-
-		if err := rows.Scan(
-			&id,
-			&requestID,
-			&fromAccountID,
-			&toAccountID,
-			&amount,
-			&status,
-			&errorMessage,
-			&createdAt,
-		); err != nil {
-			log.Println("[ERROR] Failed scanning row:", err)
-			os.Exit(1)
-		}
-
+	for _, detail := range details {
 		errorMsg := ""
-		if errorMessage.Valid {
-			errorMsg = errorMessage.String
+		if detail.ErrorMessage != nil {
+			errorMsg = *detail.ErrorMessage
 		}
 
 		record := []string{
-			strconv.FormatUint(id, 10),
-			requestID,
-			strconv.FormatUint(fromAccountID, 10),
-			strconv.FormatUint(toAccountID, 10),
-			strconv.FormatInt(amount, 10),
-			status,
+			strconv.FormatUint(detail.TransactionID, 10),
+			detail.RequestID,
+			strconv.FormatUint(detail.FromAccountID, 10),
+			strconv.FormatUint(detail.ToAccountID, 10),
+			strconv.FormatInt(detail.Amount, 10),
+			detail.Status,
 			errorMsg,
-			createdAt.Format("2006-01-02 15:04:05"),
+			strconv.FormatInt(detail.FromBalance, 10),
+			strconv.FormatInt(detail.ToBalance, 10),
+			detail.CreatedAt,
 		}
 
 		if err := csvWriter.Write(record); err != nil {
-			log.Println("[ERROR] Failed writing CSV row:", err)
+			log.Println("[ERROR] Failed to write transaction row:", err)
 			os.Exit(1)
 		}
-
-		rowCount++
 	}
 
-	if err := rows.Err(); err != nil {
-		log.Println("[ERROR] Row iteration error:", err)
-		os.Exit(1)
+	csvWriter.Write([]string{})
+	csvWriter.Write([]string{"=== AUDIT TRAIL ===", "", "", "", "", "", "", "", "", ""})
+	csvWriter.Write([]string{})
+
+	// ===== SECTION 2: Audit Trail =====
+	csvWriter.Write([]string{
+		"RequestID",
+		"Action",
+		"Status",
+		"Message",
+		"Timestamp",
+	})
+
+	for _, detail := range details {
+		for _, audit := range detail.AuditLogs {
+			auditMsg := ""
+			if audit.Message != nil {
+				auditMsg = *audit.Message
+			}
+
+			auditRecord := []string{
+				detail.RequestID,
+				audit.Action,
+				audit.Status,
+				auditMsg,
+				audit.Timestamp,
+			}
+
+			if err := csvWriter.Write(auditRecord); err != nil {
+				log.Println("[ERROR] Failed to write audit row:", err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	csvWriter.Flush()
@@ -207,7 +190,7 @@ func runReport() {
 		os.Exit(1)
 	}
 
-	log.Printf("[SUCCESS] Report generated successfully. Rows exported: %d\n", rowCount)
+	log.Printf("[SUCCESS] Report generated successfully with %d transactions\n", len(details))
 	log.Printf("[INFO] Output file: %s\n", fileName)
 
 	os.Exit(0)
