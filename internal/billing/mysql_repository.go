@@ -37,6 +37,18 @@ func (r *MySQLRepository) GetAccountForUpdate(ctx context.Context, tx *sql.Tx, a
 	return &acc, nil
 }
 
+func (r *MySQLRepository) GetAccountBalance(ctx context.Context, tx *sql.Tx, accountID uint64) (int64, error) {
+	query := `
+		SELECT balance FROM accounts WHERE id = ?
+	`
+	var bal int64
+	row := tx.QueryRowContext(ctx, query, accountID)
+	if err := row.Scan(&bal); err != nil {
+		return 0, fmt.Errorf("failed to fetch balance for account %d: %w", accountID, err)
+	}
+	return bal, nil
+}
+
 func (r *MySQLRepository) UpdateAccountBalance(ctx context.Context, tx *sql.Tx, accountID uint64, newBalance int64) error {
 	query := `
 		UPDATE accounts
@@ -54,9 +66,9 @@ func (r *MySQLRepository) UpdateAccountBalance(ctx context.Context, tx *sql.Tx, 
 
 func (r *MySQLRepository) InsertTransaction(ctx context.Context, tx *sql.Tx, txn *Transaction) (uint64, error) {
 	query := `
-		INSERT INTO transactions 
-		(request_id, from_account_id, to_account_id, amount, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+		INSERT INTO transactions (request_id, from_account_id, to_account_id, amount, 
+		status, from_balance, to_balance, created_at, updated_at) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
 	`
 
 	result, err := tx.ExecContext(ctx, query,
@@ -65,6 +77,8 @@ func (r *MySQLRepository) InsertTransaction(ctx context.Context, tx *sql.Tx, txn
 		txn.ToAccountID,
 		txn.Amount,
 		txn.Status,
+		txn.FromBalance,
+		txn.ToBalance,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert transaction: %w", err)
