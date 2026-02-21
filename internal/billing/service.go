@@ -96,6 +96,21 @@ func (s *Service) Transfer(ctx context.Context, req TransferRequest) error {
 		return fmt.Errorf("begin insert tx failed: %w", err)
 	}
 
+	// Read current balances (no FOR UPDATE) to store snapshots
+	fromBal, err := s.repo.GetAccountBalance(ctx, txInsert, req.FromID)
+	if err != nil {
+		txInsert.Rollback()
+		return fmt.Errorf("failed to read sender balance: %w", err)
+	}
+	toBal, err := s.repo.GetAccountBalance(ctx, txInsert, req.ToID)
+	if err != nil {
+		txInsert.Rollback()
+		return fmt.Errorf("failed to read receiver balance: %w", err)
+	}
+
+	pendingTxn.FromBalance = fromBal
+	pendingTxn.ToBalance = toBal
+
 	txnID, err := s.repo.InsertTransaction(ctx, txInsert, pendingTxn)
 	if err != nil {
 		txInsert.Rollback()

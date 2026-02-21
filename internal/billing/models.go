@@ -25,6 +25,8 @@ type Transaction struct {
 	Amount        int64
 	Status        TransactionStatus
 	ErrorMessage  *string
+	FromBalance   int64
+	ToBalance     int64
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

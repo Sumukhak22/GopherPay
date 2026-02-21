@@ -182,6 +182,37 @@ func runReport() {
 		}
 	}
 
+	// ===== SECTION 3: Summary Stats (Optional) =====
+	csvWriter.Write([]string{})
+	csvWriter.Write([]string{"=== SUMMARY STATS ===", "", "", "", "", ""})
+	csvWriter.Write([]string{})
+
+	// Fetch summary (lenient - continue if it fails)
+	summary, err := reporting.GetUserSummary(ctx, db, userID)
+	if err != nil {
+		log.Printf("[WARN] Summary generation failed: %v, continuing without summary\n", err)
+		csvWriter.Write([]string{"Summary: Data unavailable"})
+	} else {
+		// Write summary rows
+		summaryRows := [][]string{
+			{"Total Transactions:", fmt.Sprintf("%d", summary.TotalTransactions)},
+			{"Successful:", fmt.Sprintf("%d", summary.SuccessfulCount)},
+			{"Failed:", fmt.Sprintf("%d", summary.FailedCount)},
+			{"Success Rate:", fmt.Sprintf("%.2f%%", summary.SuccessRate)},
+			{"Total Amount Sent (cents):", fmt.Sprintf("%d", summary.TotalSent)},
+			{"Total Amount Received (cents):", fmt.Sprintf("%d", summary.TotalReceived)},
+			{"Net Change (cents):", fmt.Sprintf("%d", summary.NetChange)},
+			{"Account Created:", summary.AccountCreatedAt},
+			{"Last Activity:", summary.LastActivityAt},
+		}
+
+		for _, row := range summaryRows {
+			if err := csvWriter.Write(row); err != nil {
+				log.Printf("[WARN] Failed to write summary row: %v\n", err)
+			}
+		}
+	}
+
 	csvWriter.Flush()
 	bufferedWriter.Flush()
 

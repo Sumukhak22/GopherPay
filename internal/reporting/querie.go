@@ -21,6 +21,18 @@ type TransactionDetail struct {
 	AuditLogs     []AuditEntry
 }
 
+type Summary struct {
+	TotalTransactions int64
+	SuccessfulCount   int64
+	FailedCount       int64
+	SuccessRate       float64
+	TotalSent         int64
+	TotalReceived     int64
+	NetChange         int64
+	AccountCreatedAt  string
+	LastActivityAt    string
+}
+
 type AuditEntry struct {
 	Action    string
 	Status    string
@@ -41,6 +53,8 @@ func GetUserTransactionsWithAudit(ctx context.Context, db *sql.DB, userID uint64
             t.amount,
             t.status,
             t.error_message,
+			t.from_balance,
+			t.to_balance,
             t.created_at
         FROM transactions t
         WHERE t.from_account_id = ? OR t.to_account_id = ?
@@ -64,34 +78,38 @@ func GetUserTransactionsWithAudit(ctx context.Context, db *sql.DB, userID uint64
 			amount    int64
 			status    string
 			errorMsg  sql.NullString
+			fromBal   sql.NullInt64
+			toBal     sql.NullInt64
 			createdAt string
 		)
 
-		if err := rows.Scan(&txnID, &requestID, &fromID, &toID, &amount, &status, &errorMsg, &createdAt); err != nil {
+		if err := rows.Scan(
+			&txnID,
+			&requestID,
+			&fromID,
+			&toID,
+			&amount,
+			&status,
+			&errorMsg,
+			&fromBal,
+			&toBal,
+			&createdAt,
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan transaction: %w", err)
 		}
 
-		// Step 2: Get account balances (at the time of query; ideally store snapshots)
-		fromBalQuery := `SELECT balance FROM accounts WHERE id = ?`
-		toBalQuery := `SELECT balance FROM accounts WHERE id = ?`
-
-		var fromBal, toBal int64
-		db.QueryRowContext(ctx, fromBalQuery, fromID).Scan(&fromBal)
-		db.QueryRowContext(ctx, toBalQuery, toID).Scan(&toBal)
-
-		// Step 3: Get audit logs for this request
+		// ---- fetch audit logs ----
 		auditQuery := `
-            SELECT action, status, message, created_at
-            FROM audit_logs
-            WHERE request_id = ?
-            ORDER BY created_at ASC
-        `
+			SELECT action, status, message, created_at
+			FROM audit_logs
+			WHERE request_id = ?
+			ORDER BY created_at ASC
+		`
 
 		auditRows, err := db.QueryContext(ctx, auditQuery, requestID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query audit logs: %w", err)
 		}
-		defer auditRows.Close()
 
 		var audits []AuditEntry
 		for auditRows.Next() {
@@ -101,9 +119,12 @@ func GetUserTransactionsWithAudit(ctx context.Context, db *sql.DB, userID uint64
 				message   sql.NullString
 				timestamp string
 			)
+
 			if err := auditRows.Scan(&action, &auditStat, &message, &timestamp); err != nil {
+				auditRows.Close()
 				return nil, fmt.Errorf("failed to scan audit log: %w", err)
 			}
+
 			audits = append(audits, AuditEntry{
 				Action:    action,
 				Status:    auditStat,
@@ -111,6 +132,7 @@ func GetUserTransactionsWithAudit(ctx context.Context, db *sql.DB, userID uint64
 				Timestamp: timestamp,
 			})
 		}
+		auditRows.Close()
 
 		details = append(details, TransactionDetail{
 			TransactionID: txnID,
@@ -120,8 +142,8 @@ func GetUserTransactionsWithAudit(ctx context.Context, db *sql.DB, userID uint64
 			Amount:        amount,
 			Status:        status,
 			ErrorMessage:  nullStringToPtr(errorMsg),
-			FromBalance:   fromBal,
-			ToBalance:     toBal,
+			FromBalance:   fromBal.Int64,
+			ToBalance:     toBal.Int64,
 			CreatedAt:     createdAt,
 			AuditLogs:     audits,
 		})
@@ -136,4 +158,67 @@ func nullStringToPtr(ns sql.NullString) *string {
 		return &ns.String
 	}
 	return nil
+}
+
+func GetUserSummary(ctx context.Context, db *sql.DB, userID uint64) (*Summary, error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_txns,
+			SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
+			SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) as failed_count,
+			COALESCE(SUM(CASE WHEN from_account_id = ? THEN amount ELSE 0 END), 0) as total_sent,
+			COALESCE(SUM(CASE WHEN to_account_id = ? THEN amount ELSE 0 END), 0) as total_received,
+			MAX(t.created_at) as last_txn
+		FROM transactions t
+		WHERE t.from_account_id = ? OR t.to_account_id = ?
+	`
+
+	var (
+		total, success, failed sql.NullInt64
+		sent, received         sql.NullInt64
+		lastTxn                sql.NullString
+	)
+
+	err := db.QueryRowContext(ctx, query, userID, userID, userID, userID).Scan(
+		&total, &success, &failed, &sent, &received, &lastTxn,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query summary: %w", err)
+	}
+
+	totalVal := total.Int64
+	successVal := success.Int64
+	failedVal := failed.Int64
+	sentVal := sent.Int64
+	receivedVal := received.Int64
+
+	successRate := 0.0
+	if totalVal > 0 {
+		successRate = (float64(successVal) / float64(totalVal)) * 100
+	}
+
+	// Get account creation time (use the first account involved in transactions)
+	accountQuery := `
+		SELECT MIN(created_at) FROM accounts 
+		WHERE id IN (
+			SELECT DISTINCT from_account_id FROM transactions WHERE from_account_id = ?
+			UNION
+			SELECT DISTINCT to_account_id FROM transactions WHERE to_account_id = ?
+		)
+	`
+
+	var accountCreated sql.NullString
+	db.QueryRowContext(ctx, accountQuery, userID, userID).Scan(&accountCreated)
+
+	return &Summary{
+		TotalTransactions: totalVal,
+		SuccessfulCount:   successVal,
+		FailedCount:       failedVal,
+		SuccessRate:       successRate,
+		TotalSent:         sentVal,
+		TotalReceived:     receivedVal,
+		NetChange:         receivedVal - sentVal,
+		AccountCreatedAt:  accountCreated.String,
+		LastActivityAt:    lastTxn.String,
+	}, nil
 }
