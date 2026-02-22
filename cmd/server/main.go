@@ -23,7 +23,7 @@ func main() {
 	// cfg := config.LoadDBConfig()
 
 	// if err != nil {
-	// 	log.Fatal(err)
+	//  log.Fatal(err)
 	// }
 	cfg, err := config.LoadDBConfig()
 	db, err := config.ConnectDB(cfg)
@@ -36,6 +36,9 @@ func main() {
 	repo := billing.NewMySQLRepository(db)
 	auditRepo := audit.NewMySQLRepository(db)
 	service := billing.NewService(repo, auditRepo, logr)
+	accountsHandler := apphttp.NewAccountsHandler(repo)
+	transactionsHandler := apphttp.NewTransactionsHandler(repo)
+	auditHandler := apphttp.NewAuditHandler(auditRepo)
 
 	pool := worker.NewPool(100, service, logr) //lower buffer size to test backpressure (429)
 	pool.Start(10)
@@ -47,7 +50,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/transfer", middleware.RequestID(handler))
 	mux.Handle("/health", healthHandler)
+	mux.Handle("/accounts", accountsHandler)
+	mux.Handle("/transactions", transactionsHandler)
+	mux.Handle("/audit", auditHandler)
 
+	fs := http.FileServer(http.Dir("./web"))
+	mux.Handle("/", fs)
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,

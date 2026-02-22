@@ -43,3 +43,6 @@ CREATE TABLE audit_logs (
     INDEX idx_request_id (request_id),
     INDEX idx_created_at (created_at)
 );
+
+ALTER TABLE audit_logs
+DROP FOREIGN KEY fk_audit_request_id;
