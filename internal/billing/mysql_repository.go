@@ -20,11 +20,11 @@ func (r *MySQLRepository) BeginTx(ctx context.Context) (*sql.Tx, error) {
 
 func (r *MySQLRepository) GetAccountForUpdate(ctx context.Context, tx *sql.Tx, accountID uint64) (*Account, error) {
 	query := `
-		SELECT id, balance, created_at, updated_at
-		FROM accounts
-		WHERE id = ?
-		FOR UPDATE
-	`
+        SELECT id, balance, created_at, updated_at
+        FROM accounts
+        WHERE id = ?
+        FOR UPDATE
+    `
 
 	row := tx.QueryRowContext(ctx, query, accountID)
 
@@ -39,8 +39,8 @@ func (r *MySQLRepository) GetAccountForUpdate(ctx context.Context, tx *sql.Tx, a
 
 func (r *MySQLRepository) GetAccountBalance(ctx context.Context, tx *sql.Tx, accountID uint64) (int64, error) {
 	query := `
-		SELECT balance FROM accounts WHERE id = ?
-	`
+        SELECT balance FROM accounts WHERE id = ?
+    `
 	var bal int64
 	row := tx.QueryRowContext(ctx, query, accountID)
 	if err := row.Scan(&bal); err != nil {
@@ -51,10 +51,10 @@ func (r *MySQLRepository) GetAccountBalance(ctx context.Context, tx *sql.Tx, acc
 
 func (r *MySQLRepository) UpdateAccountBalance(ctx context.Context, tx *sql.Tx, accountID uint64, newBalance int64) error {
 	query := `
-		UPDATE accounts
-		SET balance = ?, updated_at = NOW()
-		WHERE id = ?
-	`
+        UPDATE accounts
+        SET balance = ?, updated_at = NOW()
+        WHERE id = ?
+    `
 
 	_, err := tx.ExecContext(ctx, query, newBalance, accountID)
 	if err != nil {
@@ -66,10 +66,10 @@ func (r *MySQLRepository) UpdateAccountBalance(ctx context.Context, tx *sql.Tx, 
 
 func (r *MySQLRepository) InsertTransaction(ctx context.Context, tx *sql.Tx, txn *Transaction) (uint64, error) {
 	query := `
-		INSERT INTO transactions (request_id, from_account_id, to_account_id, amount, 
-		status, from_balance, to_balance, created_at, updated_at) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-	`
+        INSERT INTO transactions (request_id, from_account_id, to_account_id, amount,
+        status, from_balance, to_balance, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    `
 
 	result, err := tx.ExecContext(ctx, query,
 		txn.RequestID,
@@ -94,10 +94,10 @@ func (r *MySQLRepository) InsertTransaction(ctx context.Context, tx *sql.Tx, txn
 
 func (r *MySQLRepository) UpdateTransactionStatus(ctx context.Context, tx *sql.Tx, txnID uint64, status TransactionStatus, errMsg *string) error {
 	query := `
-		UPDATE transactions
-		SET status = ?, error_message = ?, updated_at = NOW()
-		WHERE id = ?
-	`
+        UPDATE transactions
+        SET status = ?, error_message = ?, updated_at = NOW()
+        WHERE id = ?
+    `
 
 	_, err := tx.ExecContext(ctx, query, status, errMsg, txnID)
 	if err != nil {
@@ -105,4 +105,74 @@ func (r *MySQLRepository) UpdateTransactionStatus(ctx context.Context, tx *sql.T
 	}
 
 	return nil
+}
+
+func (r *MySQLRepository) GetAllAccounts(ctx context.Context) ([]Account, error) {
+
+	query := `
+        SELECT id, balance, created_at, updated_at
+        FROM accounts
+        ORDER BY id ASC
+    `
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []Account
+
+	for rows.Next() {
+		var acc Account
+		if err := rows.Scan(&acc.ID, &acc.Balance, &acc.CreatedAt, &acc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, acc)
+	}
+
+	return accounts, nil
+}
+
+func (r *MySQLRepository) GetRecentTransactions(ctx context.Context) ([]Transaction, error) {
+
+	query := `
+        SELECT id, request_id, from_account_id, to_account_id,
+               amount, status, error_message,
+               from_balance, to_balance,
+               created_at, updated_at
+        FROM transactions
+        ORDER BY created_at DESC
+        LIMIT 50
+    `
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txns []Transaction
+
+	for rows.Next() {
+		var txn Transaction
+		if err := rows.Scan(
+			&txn.ID,
+			&txn.RequestID,
+			&txn.FromAccountID,
+			&txn.ToAccountID,
+			&txn.Amount,
+			&txn.Status,
+			&txn.ErrorMessage,
+			&txn.FromBalance,
+			&txn.ToBalance,
+			&txn.CreatedAt,
+			&txn.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		txns = append(txns, txn)
+	}
+
+	return txns, nil
 }

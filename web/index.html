@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GopherPay Admin Console</title>
+ 
+<style>
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background-color: #f4f6f9;
+    color: #1f2937;
+}
+ 
+header {
+    background: #ffffff;
+    padding: 20px 40px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+ 
+h1 {
+    margin: 0;
+    font-size: 22px;
+}
+ 
+.health {
+    font-weight: 600;
+}
+ 
+.health.ok { color: #16a34a; }
+.health.fail { color: #dc2626; }
+ 
+.container {
+    padding: 30px 40px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 25px;
+}
+ 
+.card {
+    background: #ffffff;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+ 
+.card h2 {
+    margin-top: 0;
+    font-size: 18px;
+    margin-bottom: 15px;
+}
+ 
+input, select {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 12px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    font-size: 14px;
+}
+ 
+button {
+    background-color: #2563eb;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+ 
+button:hover {
+    background-color: #1d4ed8;
+}
+ 
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+ 
+th, td {
+    padding: 8px;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+}
+ 
+th {
+    background-color: #f9fafb;
+    font-weight: 600;
+}
+ 
+.status-success { color: #16a34a; font-weight: 600; }
+.status-failed { color: #dc2626; font-weight: 600; }
+.status-pending { color: #d97706; font-weight: 600; }
+ 
+.message {
+    margin-top: 10px;
+    font-size: 14px;
+}
+ 
+.metrics {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+ 
+.metric-box {
+    background: #f9fafb;
+    padding: 15px;
+    border-radius: 8px;
+    min-width: 120px;
+}
+ 
+.metric-box strong {
+    display: block;
+    font-size: 13px;
+    color: #6b7280;
+}
+ 
+.metric-box div {
+    font-size: 18px;
+    font-weight: 600;
+}
+ 
+.spinner {
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #2563eb;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    animation: spin 1s linear infinite;
+    display: inline-block;
+}
+ 
+@keyframes spin {
+    100% { transform: rotate(360deg); }
+}
+ 
+@media (max-width: 768px) {
+    header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+</style>
+</head>
+<body>
+ 
+<header>
+    <h1>GopherPay Admin Console</h1>
+    <div id="healthStatus" class="health">Checking system health...</div>
+</header>
+ 
+<div class="container">
+ 
+    <!-- Summary Metrics -->
+    <div class="card">
+        <h2>Summary Metrics</h2>
+        <div class="metrics">
+            <div class="metric-box">
+                <strong>Total Transactions</strong>
+                <div id="totalTx">0</div>
+            </div>
+            <div class="metric-box">
+                <strong>Successful</strong>
+                <div id="successTx">0</div>
+            </div>
+            <div class="metric-box">
+                <strong>Failed</strong>
+                <div id="failedTx">0</div>
+            </div>
+        </div>
+    </div>
+ 
+    <!-- Transfer -->
+    <div class="card">
+        <h2>Transfer Funds</h2>
+ 
+        <select id="fromAccount"></select>
+        <select id="toAccount"></select>
+        <input type="number" id="amount" placeholder="Amount (in rupees)" />
+ 
+        <button onclick="submitTransfer()">Submit Transfer</button>
+        <div id="transferMessage" class="message"></div>
+    </div>
+ 
+    <!-- Accounts -->
+    <div class="card">
+        <h2>Accounts Overview</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Balance</th>
+                </tr>
+            </thead>
+            <tbody id="accountsTable"></tbody>
+        </table>
+    </div>
+ 
+    <!-- Transactions -->
+    <div class="card">
+        <h2>Recent Transactions</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>From</th>
+                    <th>To</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="transactionsTable"></tbody>
+        </table>
+    </div>
+ 
+    <!-- Audit Logs -->
+    <div class="card">
+        <h2>Audit Logs</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Request ID</th>
+                    <th>Status</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody id="auditTable"></tbody>
+        </table>
+    </div>
+ 
+</div>
+ 
+<script>
+function formatCurrency(cents) {
+    const rupees = cents / 100;
+    return "₹ " + rupees.toLocaleString("en-IN", { minimumFractionDigits: 2 });
+}
+ 
+async function fetchHealth() {
+    try {
+        const res = await fetch('/health');
+        const data = await res.json();
+        const el = document.getElementById('healthStatus');
+ 
+        if (data.status === "ok") {
+            el.textContent = "System Healthy";
+            el.className = "health ok";
+        } else {
+            el.textContent = "System Issue";
+            el.className = "health fail";
+        }
+    } catch {
+        document.getElementById('healthStatus').textContent = "Health Check Failed";
+    }
+}
+ 
+async function fetchAccounts() {
+    const res = await fetch('/accounts');
+    const data = await res.json();
+ 
+    const table = document.getElementById('accountsTable');
+    const fromSelect = document.getElementById('fromAccount');
+    const toSelect = document.getElementById('toAccount');
+ 
+    table.innerHTML = "";
+    fromSelect.innerHTML = "";
+    toSelect.innerHTML = "";
+ 
+    data.forEach(acc => {
+        table.innerHTML += `<tr><td>${acc.ID}</td><td>${formatCurrency(acc.Balance)}</td></tr>`;
+        fromSelect.innerHTML += `<option value="${acc.ID}">Account ${acc.ID}</option>`;
+        toSelect.innerHTML += `<option value="${acc.ID}">Account ${acc.ID}</option>`;
+    });
+}
+ 
+async function fetchTransactions() {
+    const res = await fetch('/transactions');
+    const data = await res.json();
+ 
+    const table = document.getElementById('transactionsTable');
+    table.innerHTML = "";
+ 
+    updateMetrics(data);
+ 
+    data.forEach(tx => {
+        let statusClass = "status-pending";
+        if (tx.Status === "SUCCESS") statusClass = "status-success";
+        if (tx.Status === "FAILED") statusClass = "status-failed";
+ 
+        table.innerHTML += `
+            <tr>
+                <td>${tx.ID}</td>
+                <td>${tx.FromAccountID}</td>
+                <td>${tx.ToAccountID}</td>
+                <td>${formatCurrency(tx.Amount)}</td>
+                <td class="${statusClass}">${tx.Status}</td>
+            </tr>
+        `;
+    });
+}
+ 
+function updateMetrics(transactions) {
+    let total = transactions.length;
+    let success = transactions.filter(t => t.Status === "SUCCESS").length;
+    let failed = transactions.filter(t => t.Status === "FAILED").length;
+ 
+    document.getElementById("totalTx").innerText = total;
+    document.getElementById("successTx").innerText = success;
+    document.getElementById("failedTx").innerText = failed;
+}
+ 
+async function fetchAudit() {
+    const res = await fetch('/audit');
+    const data = await res.json();
+ 
+    const table = document.getElementById('auditTable');
+    table.innerHTML = "";
+ 
+    data.forEach(log => {
+        table.innerHTML += `
+            <tr>
+                <td>${log.RequestID}</td>
+                <td>${log.Status}</td>
+                <td>${log.Message || ""}</td>
+            </tr>
+        `;
+    });
+}
+ 
+async function submitTransfer() {
+    const from = document.getElementById('fromAccount').value;
+    const to = document.getElementById('toAccount').value;
+    const amount = document.getElementById('amount').value;
+    const msg = document.getElementById('transferMessage');
+ 
+    msg.innerHTML = '<span class="spinner"></span> Processing...';
+ 
+    const res = await fetch('/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            from_id: parseInt(from),
+            to_id: parseInt(to),
+            amount: parseInt(amount) *100 // convert to paise
+        })
+    });
+ 
+    if (res.status === 202) {
+        msg.textContent = "Transfer submitted successfully.";
+        msg.style.color = "#16a34a";
+    } else if (res.status === 429) {
+        msg.textContent = "System busy. Please retry.";
+        msg.style.color = "#dc2626";
+    } else {
+        msg.textContent = "Transfer failed.";
+        msg.style.color = "#dc2626";
+    }
+ 
+    setTimeout(() => {
+        fetchAccounts();
+        fetchTransactions();
+        fetchAudit();
+    }, 1000);
+}
+ 
+fetchHealth();
+fetchAccounts();
+fetchTransactions();
+fetchAudit();
+setInterval(fetchHealth, 10000);
+</script>
+ 
+</body>
+</html>
+ 
