@@ -199,9 +199,9 @@ func runReport() {
 			{"Successful:", fmt.Sprintf("%d", summary.SuccessfulCount)},
 			{"Failed:", fmt.Sprintf("%d", summary.FailedCount)},
 			{"Success Rate:", fmt.Sprintf("%.2f%%", summary.SuccessRate)},
-			{"Total Amount Sent (cents):", fmt.Sprintf("%d", summary.TotalSent)},
-			{"Total Amount Received (cents):", fmt.Sprintf("%d", summary.TotalReceived)},
-			{"Net Change (cents):", fmt.Sprintf("%d", summary.NetChange)},
+			{"Total Amount Sent :", fmt.Sprintf("%d", summary.TotalSent)},
+			{"Total Amount Received :", fmt.Sprintf("%d", summary.TotalReceived)},
+			{"Net Change :", fmt.Sprintf("%d", summary.NetChange)},
 			{"Account Created:", summary.AccountCreatedAt},
 			{"Last Activity:", summary.LastActivityAt},
 		}
